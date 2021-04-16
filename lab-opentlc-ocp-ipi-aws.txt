@@ -1,0 +1,793 @@
+Lab RH OpenTLC OCP 4.x
+
+########################################################################
+# LAB OPENTLC sur AWS
+########################################################################
+
+| https://labs.opentlc.com
+| Services â†’ Catalogs â†’ All Services â†’ OPENTLC OpenShift 4 Labs.
+| On the left, | select OpenShift 4 Installation Lab.
+
+# LAB Input to Access the OpenShift Installation / Bastion
+
+export LAB_GUID=efaf
+export LAB_SANDBOX=sandbox222
+export LAB_SSH_PWD=xxxx
+export AWS_KEY=xxxx
+export AWS_SECRETKEY=xxxx
+export AWS_REGION=us-east-2
+
+ssh-copy-id -i $HOME/.ssh/id_rsa.pub lcolagio-redhat.com@bastion.$LAB_GUID.$LAB_SANDBOX.opentlc.com
+echo alias BASTION_OCP="'ssh lcolagio-redhat.com@bastion.$LAB_GUID.$LAB_SANDBOX.opentlc.com'" >>$HOME/.bash_profile
+source $HOME/.bash_profile
+
+BASTION_OCP
+
+# LAB Output to Access the OpenShift web-console here:
+
+OCP_CONSOLE: https://console-openshift-console.apps.cluster-784f.784f.sandbox474.opentlc.com
+OCP_KUBADMIN: export KUBECONFIG=/home/lcolagio-redhat.com/cluster-784f/auth/kubeconfig
+OCP_ADMIN: kubeadmin
+OCP_ADMIN_PWD: xxxxxx
+
+
+########################################################################
+# SSH-KEY Cluster OCP
+########################################################################
+
+ssh-keygen -f ~/.ssh/cluster-${GUID}-key -N ''
+
+
+########################################################################
+# Export ENV to .bashrc
+########################################################################
+
+export OCP_RELEASE=4.7.1
+export OCP_PULLSECRET='{"auths":{"cxxx==","email":"lcolagio@redhat.com"}}}'
+export OCP_BASE_DOMAIN=$LAB_SANDBOX.opentlc.com
+export OCP_SSH=$(cat ~/.ssh/cluster-${GUID}-key.pub)
+
+export KUBECONFIG=/home/lcolagio-redhat.com/cluster-${GUID}/auth/kubeconfig
+
+ansible localhost -m lineinfile -a "path=${HOME}/.bashrc regexp='^export OCP_RELEASE' line='export OCP_RELEASE=${OCP_RELEASE}'"
+ansible localhost -m lineinfile -a "path=${HOME}/.bashrc regexp='^export AWS_KEY' line='export AWS_KEY=${AWS_KEY}'"
+ansible localhost -m lineinfile -a "path=${HOME}/.bashrc regexp='^export AWS_SECRETKEY' line='export AWS_SECRETKEY=${AWS_SECRETKEY}'"
+ansible localhost -m lineinfile -a "path=${HOME}/.bashrc regexp='^export AWS_REGION' line='export AWS_REGION=${AWS_REGION}'"
+ansible localhost -m lineinfile -a 'path=${HOME}/.bashrc regexp="^export PRODUCT_REPO" line="export PRODUCT_REPO=openshift-release-dev"'
+ansible localhost -m lineinfile -a 'path=${HOME}/.bashrc regexp="^export RELEASE_NAME" line="export RELEASE_NAME=ocp-release"'
+ansible localhost -m lineinfile -a "path=${HOME}/.bashrc regexp='^export OCP_BASE_DOMAIN' line='export OCP_BASE_DOMAIN=${OCP_BASE_DOMAIN}'"
+ansible localhost -m lineinfile -a "path=${HOME}/.bashrc regexp='^export KUBECONFIG' line='export KUBECONFIG=${KUBECONFIG}'"
+
+OCP_PULLSECRET=${OCP_PULLSECRET}'"
+echo export OCP_PULLSECRET="'"${OCP_PULLSECRET}"'" >> .bashrc
+
+source ./.bashrc
+
+########################################################################
+# INIT CLIENT OC
+########################################################################
+
+# sudo -i
+# echo ${GUID}
+
+wget https://mirror.openshift.com/pub/openshift-v4/clients/ocp/${OCP_RELEASE}/openshift-install-linux-${OCP_RELEASE}.tar.gz
+sudo tar zxvf openshift-install-linux-${OCP_RELEASE}.tar.gz -C /usr/bin
+sudo rm -f openshift-install-linux-${OCP_RELEASE}.tar.gz /usr/bin/README.md
+sudo chmod +x /usr/bin/openshift-install
+openshift-install version
+
+
+#########################
+# AWS Configuration
+#########################
+
+curl "https://s3.amazonaws.com/aws-cli/awscli-bundle.zip" -o "awscli-bundle.zip"
+unzip -o awscli-bundle.zip
+sudo ./awscli-bundle/install -i /usr/local/aws -b /bin/aws
+rm awscli-bundle.zip -f
+aws --version
+
+rm -rf .aws
+
+if [ ! -d "$HOME/.aws" ] ; then mkdir "$HOME/.aws" ; fi
+cat << EOF >  $HOME/.aws/credentials
+[default]
+aws_access_key_id = ${AWS_KEY}
+aws_secret_access_key = ${AWS_SECRETKEY}
+region = ${AWS_REGION}
+EOF
+
+aws --version
+aws sts get-caller-identity
+
+#########################
+# Download and install the latest OC Install tool
+#########################
+
+echo $OCP_PULLSECRET > $HOME/ocp_pullsecret.json
+wget https://mirror.openshift.com/pub/openshift-v4/clients/ocp/$OCP_RELEASE/openshift-client-linux-$OCP_RELEASE.tar.gz
+sudo tar xzf openshift-client-linux-$OCP_RELEASE.tar.gz -C /usr/local/sbin/ oc kubectl
+rm -f openshift-install-linux-${OCP_RELEASE}.tar.gz /usr/bin/README.md
+which oc
+oc completion bash | sudo tee /etc/bash_completion.d/openshift > /dev/null
+
+rm -f openshift-client-linux-$OCP_RELEASE.tar.gz
+oc version
+
+########################################################################
+# Download Install OCP tool
+########################################################################
+
+# echo $OCP_PULLSECRET > $HOME/ocp_pullsecret.json
+# oc adm release extract -a $HOME/ocp_pullsecret.json --command=openshift-install "quay.io/${PRODUCT_REPO}/${RELEASE_NAME}:${OCP_RELEASE}-x86_64"
+# ./openshift-install version
+
+########################################################################
+# Start Install OCP Cluster
+########################################################################
+
+clear
+echo OCP_SSH: $OCP_SSH
+echo OCP_PULLSECRET: $OCP_PULLSECRET
+echo CLUSTER_NAME: cluster-$GUID
+echo OCP_BASE_DOMAINE: $OCP_BASE_DOMAIN
+echo AWS_REGION: $AWS_REGION
+
+sleep 10
+
+mkdir $HOME/cluster-${GUID}
+
+cat << EOF >$HOME/cluster-${GUID}/install-config.yaml
+apiVersion: v1
+baseDomain: ${OCP_BASE_DOMAIN}
+compute:
+- architecture: amd64
+  hyperthreading: Enabled
+  name: worker
+  platform: {}
+  replicas: 3
+controlPlane:
+  architecture: amd64
+  hyperthreading: Enabled
+  name: master
+  platform: {}
+  replicas: 3
+metadata:
+  creationTimestamp: null
+  name: cluster-${GUID}
+networking:
+  clusterNetwork:
+  - cidr: 10.128.0.0/14
+    hostPrefix: 23
+  machineNetwork:
+  - cidr: 10.0.0.0/16
+  networkType: OpenShiftSDN
+  serviceNetwork:
+  - 172.30.0.0/16
+platform:
+  aws:
+    region: ${AWS_REGION}
+publish: External
+pullSecret: '${OCP_PULLSECRET}'
+sshKey: |
+  ${OCP_SSH}
+EOF
+
+cat $HOME/cluster-${GUID}/install-config.yaml
+
+openshift-install create cluster --dir $HOME/cluster-${GUID}
+
+########################################################################
+#  Or step by step install
+########################################################################
+
+# openshift-install create install-config --dir $HOME/cluster-${GUID}
+# openshift-install create manifests --dir $HOME/cluster-${GUID}
+# openshift-install create ignition-configs --dir $HOME/cluster-${GUID}
+# openshift-install create cluster --dir $HOME/cluster-${GUID}
+
+########################################################################
+# Check Installation
+########################################################################
+
+tail ${HOME}/cluster-${GUID}/.openshift_install.log -f
+openshift-install gather bootstrap --dir=${HOME}/cluster-${GUID}
+openshift-install wait-for bootstrap-complete --dir=${HOME}/cluster-${GUID}
+
+########################################################################
+# Connect to cluster if OK
+########################################################################
+
+#To access the cluster as the system:admin user when using 'oc', run '
+export KUBECONFIG=/home/lcolagio-redhat.com/cluster-${GUID}/auth/kubeconfig
+oc get co
+oc get nodes
+
+#Login to the console with
+console : https://console-openshift-console.apps.cluster-${GUID}.sandbox1131.opentlc.com
+user: kubeadmin
+password: RZuVI-6fXSH-qV3ir-qtsQW
+
+########################################################################
+# Configuring HTPassw identity provider 
+########################################################################
+
+#
+# Add Users OCP
+#
+
+echo "Creating htpasswd file"
+htpasswd -c -b -B htpasswd opentlc-mgr r3dh4t1!
+
+htpasswd -b -B htpasswd john openshift4
+htpasswd -b -B htpasswd paul openshift4
+htpasswd -b -B htpasswd ringo openshift4
+htpasswd -b -B htpasswd george openshift4
+htpasswd -b -B htpasswd pete openshift4
+
+htpasswd -b -B htpasswd admin admin
+htpasswd -b -B htpasswd andrew r3dh4t1!
+htpasswd -b -B htpasswd karla r3dh4t1!
+htpasswd -b -B htpasswd marina r3dh4t1!
+
+htpasswd -b -B htpasswd user0 openshift4
+htpasswd -b -B htpasswd user1 openshift4
+htpasswd -b -B htpasswd user2 openshift4
+htpasswd -b -B htpasswd user3 openshift4
+htpasswd -b -B htpasswd user4 openshift4
+
+oc create secret generic htpasswd-secret --from-file htpasswd -n openshift-config
+
+cat << EOF | oc apply -f -
+apiVersion: config.openshift.io/v1
+kind: OAuth
+metadata:
+  name: cluster
+spec:
+  identityProviders:
+  - name: htpasswd
+    challenge: true
+    login: true
+    mappingMethod: claim
+    type: HTPasswd
+    htpasswd:
+      fileData:
+        name: htpasswd-secret
+EOF
+
+sleep 10
+
+oc adm policy add-cluster-role-to-user cluster-admin admin
+
+cat << EOF | oc apply -f -
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: ADMIN
+users:
+- admin
+- opentlc-mgr
+EOF
+
+cat << EOF | oc apply -f -
+apiVersion: user.openshift.io/v1
+kind: Group
+metadata:
+  name: USER
+users:
+- user0
+- user1
+- user2
+- john
+- paul
+- ringo
+- george
+- pete
+- andrew
+- karla
+- marina
+
+EOF
+
+########################################################################
+# Install tools
+########################################################################
+
+# Shell
+sudo yum install zsh -y
+sh -c "$(curl -fsSL https://raw.github.com/ohmyzsh/ohmyzsh/master/tools/install.sh)"
+zsh
+
+sudo dnf install langpacks-en glibc-all-langpacks -y
+localectl set-locale LANG=en_US.UTF-8
+
+
+# Repo
+sudo -i
+
+cat >/etc/yum.repos.d/open_ocp4-workshop.repo <<EOF
+
+[rhel-7-server-rpms]
+name=Red Hat Enterprise Linux 7
+baseurl=http://d3s3zqyaz8cp2d.cloudfront.net/repos/ocp/4.3.0/rhel-7-server-rpms
+enabled=1
+gpgcheck=0
+
+[rhel-7-server-rh-common-rpms]
+name=Red Hat Enterprise Linux 7 Common
+baseurl=http://d3s3zqyaz8cp2d.cloudfront.net/repos/ocp/4.3.0/rhel-7-server-rh-common-rpms
+enabled=1
+gpgcheck=0
+
+[rhel-7-server-extras-rpms]
+name=Red Hat Enterprise Linux 7 Extras
+baseurl=http://d3s3zqyaz8cp2d.cloudfront.net/repos/ocp/4.3.0/rhel-7-server-extras-rpms
+enabled=1
+gpgcheck=0
+
+[rhel-7-server-optional-rpms]
+name=Red Hat Enterprise Linux 7 Optional
+baseurl=http://d3s3zqyaz8cp2d.cloudfront.net/repos/ocp/4.3.0/rhel-7-server-optional-rpms
+enabled=1
+gpgcheck=0
+
+[rhel-7-server-ansible-2.8-rpms]
+name=Red Hat Enterprise Linux Ansible (RPMs)
+baseurl=http://d3s3zqyaz8cp2d.cloudfront.net/repos/ocp/4.3.0/rhel-7-server-ansible-2.8-rpms
+enabled=1
+gpgcheck=0
+
+[pinned-epel-rpms]
+name=EPEL Pinned (RPMs)
+baseurl=http://d3s3zqyaz8cp2d.cloudfront.net/repos/ocp/4.3.0/epel
+enabled=1
+gpgcheck=0
+
+EOF
+
+exit
+
+yum repolist
+
+# sudo subscription-manager config --rhsm.auto_enable_yum_plugins=0
+# sudo subscription-manager register --username lcolagio --password Mygirlisclara1! --auto-attach
+# sudo subscription-manager repos --enable=rhel-7-server-extras-rpms
+# sudo yum-config-manager --enable epel
+# sudo subscription-manager repos --enable rhel-server-rhscl-7-rpms
+
+sudo yum install tree -y
+sudo yum install s3cmd -y
+sudo yum install podman skopeo buildah -y
+
+# Install Noobaa
+curl -sLO https://github.com/noobaa/noobaa-operator/releases/download/v2.3.0/noobaa-linux-v2.3.0
+chmod +x noobaa-linux-v2.3.0
+sudo mv noobaa-linux-v2.3.0 /usr/bin/noobaa
+noobaa version 
+
+# Install ArgoCD
+wget https://github.com/argoproj/argo-cd/releases/download/v1.7.8/argocd-linux-amd64
+mv argocd-linux-amd64 argocd
+chmod +x argocd
+sudo mv argocd /usr/bin/argocd
+argocd version
+
+# Install helm
+wget https://mirror.openshift.com/pub/openshift-v4/clients/helm/latest/helm-linux-amd64
+mv helm-linux-amd64 helm
+chmod +x helm
+sudo mv helm /usr/bin/helm
+helm version
+
+# Install knative
+wget https://github.com/knative/client/releases/download/v0.16.1/kn-linux-amd64
+mv kn-linux-amd64 kn
+chmod +x kn
+sudo mv kn /usr/bin/kn
+kn version
+
+# Install Kustomize
+curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"  | bash
+sudo mv kustomize /usr/bin/kustomize
+exit
+
+# Instal grpcurl
+
+wget https://github.com/fullstorydev/grpcurl/releases/download/v1.8.0/grpcurl_1.8.0_linux_x86_64.tar.gz
+tar -xvf grpcurl_1.8.0_linux_x86_64.tar.g
+chmod +x grpcurl
+sudo mv grpcurl /usr/bin/grpcurl
+
+# Install Tekton
+## https://mirror.openshift.com/pub/openshift-v4/clients/pipeline/0.15.0/tkn-linux-amd64-0.15.0.tar.gz?extIdCarryOver=true&sc_cid=701f2000001Css5AAC
+wget https://mirror.openshift.com/pub/openshift-v4/clients/pipeline/0.15.0/tkn-linux-amd64-0.15.0.tar.gz
+tar -xvf tkn-linux-amd64-0.15.0.tar.gz
+chmod +x tkn
+sudo mv tkn /usr/bin/tkn
+tkn version
+
+# Velero
+wget https://github.com/vmware-tanzu/velero/releases/download/v1.5.2/velero-v1.5.2-linux-amd64.tar.gz
+tar -zxvf velero-v1.5.2-linux-amd64.tar.gz
+sudo mv velero-v1.5.2-linux-amd64/velero /usr/local/bin/
+velero version
+
+# kubeseal
+wget https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.12.4/kubeseal-linux-amd64 -O kubeseal
+sudo install -m 755 kubeseal /usr/local/bin/kubeseal
+rm kubeseal
+
+# Install Kam
+wget https://github.com/redhat-developer/kam/releases/download/v0.0.30/kam_linux_amd64 -O kam
+chmod +x kam
+sudo mv kam /usr/local/bin/
+kam version
+
+
+
+########################
+# Install 3 nodes for OCS
+########################
+
+CLUSTERID=$(oc get machineset -n openshift-machine-api -o jsonpath='{.items[0].metadata.labels.machine\.openshift\.io/cluster-api-cluster}')
+echo ${CLUSTERID}
+
+oc apply -f -<<EOF
+
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineSet
+metadata:
+  labels:
+    machine.openshift.io/cluster-api-cluster: ${CLUSTERID}
+    machine.openshift.io/cluster-api-machine-role: workerocs
+    machine.openshift.io/cluster-api-machine-type: workerocs
+  name: ${CLUSTERID}-workerocs-${AWS_REGION}a
+  namespace: openshift-machine-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      machine.openshift.io/cluster-api-cluster: ${CLUSTERID}
+      machine.openshift.io/cluster-api-machineset: ${CLUSTERID}-workerocs-${AWS_REGION}a
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        machine.openshift.io/cluster-api-cluster: ${CLUSTERID}
+        machine.openshift.io/cluster-api-machine-role: workerocs
+        machine.openshift.io/cluster-api-machine-type: workerocs
+        machine.openshift.io/cluster-api-machineset: ${CLUSTERID}-workerocs-${AWS_REGION}a
+    spec:
+      metadata:
+        creationTimestamp: null
+        labels:
+          cluster.ocs.openshift.io/openshift-storage: ""
+          node-role.kubernetes.io/worker: ""
+      providerSpec:
+        value:
+          ami:
+            id: ami-0346f64579665ce3c
+          apiVersion: awsproviderconfig.openshift.io/v1beta1
+          blockDevices:
+          - ebs:
+              iops: 0
+              volumeSize: 120
+              volumeType: gp2
+          credentialsSecret:
+            name: aws-cloud-credentials
+          deviceIndex: 0
+          iamInstanceProfile:
+            id: ${CLUSTERID}-worker-profile
+          instanceType: m5.4xlarge
+          kind: AWSMachineProviderConfig
+          metadata:
+            creationTimestamp: null
+          placement:
+            availabilityZone: ${AWS_REGION}a
+            region: ${AWS_REGION}
+          publicIp: null
+          securityGroups:
+          - filters:
+            - name: tag:Name
+              values:
+              - ${CLUSTERID}-worker-sg
+          subnet:
+            filters:
+            - name: tag:Name
+              values:
+              - ${CLUSTERID}-private-${AWS_REGION}a
+          tags:
+          - name: kubernetes.io/cluster/${CLUSTERID}
+            value: owned
+          userDataSecret:
+            name: worker-user-data
+      versions:
+        kubelet: ""
+
+EOF
+
+sleep 5
+
+oc apply -f -<<EOF
+
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineSet
+metadata:
+  labels:
+    machine.openshift.io/cluster-api-cluster: ${CLUSTERID}
+    machine.openshift.io/cluster-api-machine-role: workerocs
+    machine.openshift.io/cluster-api-machine-type: workerocs
+  name: ${CLUSTERID}-workerocs-${AWS_REGION}b
+  namespace: openshift-machine-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      machine.openshift.io/cluster-api-cluster: ${CLUSTERID}
+      machine.openshift.io/cluster-api-machineset: ${CLUSTERID}-workerocs-${AWS_REGION}b
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        machine.openshift.io/cluster-api-cluster: ${CLUSTERID}
+        machine.openshift.io/cluster-api-machine-role: workerocs
+        machine.openshift.io/cluster-api-machine-type: workerocs
+        machine.openshift.io/cluster-api-machineset: ${CLUSTERID}-workerocs-${AWS_REGION}b
+    spec:
+      metadata:
+        creationTimestamp: null
+        labels:
+          cluster.ocs.openshift.io/openshift-storage: ""
+          node-role.kubernetes.io/worker: ""
+      providerSpec:
+        value:
+          ami:
+            id: ami-0346f64579665ce3c
+          apiVersion: awsproviderconfig.openshift.io/v1beta1
+          blockDevices:
+          - ebs:
+              iops: 0
+              volumeSize: 120
+              volumeType: gp2
+          credentialsSecret:
+            name: aws-cloud-credentials
+          deviceIndex: 0
+          iamInstanceProfile:
+            id: ${CLUSTERID}-worker-profile
+          instanceType: m5.4xlarge
+          kind: AWSMachineProviderConfig
+          metadata:
+            creationTimestamp: null
+          placement:
+            availabilityZone: ${AWS_REGION}b
+            region: ${AWS_REGION}
+          publicIp: null
+          securityGroups:
+          - filters:
+            - name: tag:Name
+              values:
+              - ${CLUSTERID}-worker-sg
+          subnet:
+            filters:
+            - name: tag:Name
+              values:
+              - ${CLUSTERID}-private-${AWS_REGION}b
+          tags:
+          - name: kubernetes.io/cluster/${CLUSTERID}
+            value: owned
+          userDataSecret:
+            name: worker-user-data
+      versions:
+        kubelet: ""
+EOF
+sleep 5
+
+
+oc apply -f -<<EOF
+
+apiVersion: machine.openshift.io/v1beta1
+kind: MachineSet
+metadata:
+  labels:
+    machine.openshift.io/cluster-api-cluster: ${CLUSTERID}
+    machine.openshift.io/cluster-api-machine-role: workerocs
+    machine.openshift.io/cluster-api-machine-type: workerocs
+  name: ${CLUSTERID}-workerocs-${AWS_REGION}c
+  namespace: openshift-machine-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      machine.openshift.io/cluster-api-cluster: ${CLUSTERID}
+      machine.openshift.io/cluster-api-machineset: ${CLUSTERID}-workerocs-${AWS_REGION}c
+  template:
+    metadata:
+      creationTimestamp: null
+      labels:
+        machine.openshift.io/cluster-api-cluster: ${CLUSTERID}
+        machine.openshift.io/cluster-api-machine-role: workerocs
+        machine.openshift.io/cluster-api-machine-type: workerocs
+        machine.openshift.io/cluster-api-machineset: ${CLUSTERID}-workerocs-${AWS_REGION}c
+    spec:
+      metadata:
+        creationTimestamp: null
+        labels:
+          cluster.ocs.openshift.io/openshift-storage: ""
+          node-role.kubernetes.io/worker: ""
+      providerSpec:
+        value:
+          ami:
+            id: ami-0346f64579665ce3c
+          apiVersion: providerconfig.openshift.io/v1beta1
+          blockDevices:
+          - ebs:
+              iops: 0
+              volumeSize: 120
+              volumeType: gp2
+          credentialsSecret:
+            name: aws-cloud-credentials
+          deviceIndex: 0
+          iamInstanceProfile:
+            id: ${CLUSTERID}-worker-profile
+          instanceType: m5.4xlarge
+          kind: AWSMachineProviderConfig
+          metadata:
+            creationTimestamp: null
+          placement:
+            availabilityZone: ${AWS_REGION}c
+            region: ${AWS_REGION}
+          publicIp: null
+          securityGroups:
+          - filters:
+            - name: tag:Name
+              values:
+              - ${CLUSTERID}-worker-sg
+          subnet:
+            filters:
+            - name: tag:Name
+              values:
+              - ${CLUSTERID}-private-${AWS_REGION}c
+          tags:
+          - name: kubernetes.io/cluster/${CLUSTERID}
+            value: owned
+          userDataSecret:
+            name: worker-user-data
+      versions:
+        kubelet: ""
+
+EOF
+
+sleep 3000
+
+########################################################################
+# List node OCS
+########################################################################
+
+oc get machines -n openshift-machine-api | egrep 'NAME|workerocs'
+oc get nodes -l 'cluster.ocs.openshift.io/openshift-storage'
+
+
+for MYNODE in $(oc get nodes -l 'cluster.ocs.openshift.io/openshift-storage' -o name)
+do 
+oc label $MYNODE node-role.kubernetes.io/ocs=
+done
+
+
+########################################################################
+#  Install OCS
+########################################################################
+
+cat <<EOF | oc apply -f -
+apiVersion: v1
+kind: Namespace
+metadata:
+  labels:
+    openshift.io/cluster-monitoring: "true"
+  name: openshift-storage
+spec: {}
+EOF
+
+
+cat <<EOF | oc apply -f -
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
+metadata:
+  name: openshift-storage-operatorgroup
+  namespace: openshift-storage
+spec:
+  targetNamespaces:
+  - openshift-storage
+EOF
+
+cat <<EOF | oc apply -f -
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: ocs-operator
+  namespace: openshift-storage
+spec:
+  channel: "stable-4.6"
+  installPlanApproval: Automatic
+  name: ocs-operator
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace
+EOF
+
+sleep 60
+
+cat <<EOF | oc apply -f -
+apiVersion: ocs.openshift.io/v1
+kind: StorageCluster
+metadata:
+  name: ocs-storagecluster
+  namespace: openshift-storage
+spec:
+  externalStorage: {}
+  storageDeviceSets:
+    - config: {}
+      count: 1
+      dataPVCTemplate:
+        metadata:
+          creationTimestamp: null
+        spec:
+          accessModes:
+            - ReadWriteOnce
+          resources:
+            requests:
+              storage: 512Gi
+          storageClassName: gp2
+          volumeMode: Block
+        status: {}
+      name: ocs-deviceset
+      placement: {}
+      portable: true
+      replica: 3
+      resources: {}
+  version: 4.6.0
+EOF
+
+
+###############################
+# Add Lentsenrypt certificate
+###############################
+
+# https://medium.com/@karansingh010/lets-automate-let-s-encrypt-tls-certs-for-openshift-4-211d6c081875
+
+cd $HOME
+git clone https://github.com/acmesh-official/acme.sh.git
+
+# Generate cert
+export AWS_ACCESS_KEY_ID=$AWS_KEY
+export AWS_SECRET_ACCESS_KEY=$AWS_SECRETKEY
+
+
+export LE_API=$(oc whoami --show-server | cut -f 2 -d ':' | cut -f 3 -d '/' | sed 's/-api././')
+export LE_WILDCARD=$(oc get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.status.domain}')
+${HOME}/acme.sh/acme.sh --issue -d ${LE_API} -d *.${LE_WILDCARD} --dns dns_aws
+
+# copie cert to folder certificates
+export CERTDIR=$HOME/certificates
+mkdir -p ${CERTDIR}
+${HOME}/acme.sh/acme.sh --install-cert -d ${LE_API} -d *.${LE_WILDCARD} --cert-file ${CERTDIR}/cert.pem --key-file ${CERTDIR}/key.pem --fullchain-file ${CERTDIR}/fullchain.pem --ca-file ${CERTDIR}/ca.cer
+# Your cert is in  /home/lcolagio-redhat.com/.acme.sh/api.cluster-04de.sandbox231.opentlc.com/api.cluster-04de.sandbox231.opentlc.com.cer
+# Your cert key is in  /home/lcolagio-redhat.com/.acme.sh/api.cluster-04de.sandbox231.opentlc.com/api.cluster-04de.sandbox231.opentlc.com.key
+# The intermediate CA cert is in  /home/lcolagio-redhat.com/.acme.sh/api.cluster-04de.sandbox231.opentlc.com/ca.cer
+# And the full chain certs is there:  /home/lcolagio-redhat.com/.acme.sh/api.cluster-04de.sandbox231.opentlc.com/fullchain.cer
+
+
+# add to OCP
+oc create secret tls router-certs --cert=${CERTDIR}/fullchain.pem --key=${CERTDIR}/key.pem -n openshift-ingress
+oc patch ingresscontroller default -n openshift-ingress-operator --type=merge --patch='{"spec": { "defaultCertificate": { "name": "router-certs" }}}'
+oc get po -n openshift-ingress
+oc get route -n openshift-console
+
+
+###############################
+# OCP - Cluster Upgrade to latest
+###############################
+
+oc patch clusterversion/version -p '{"spec":{"channel":"stable-4.6"}}' --type=merge
+oc adm upgrade
+oc adm upgrade --to-latest
+
+sleep 3000
