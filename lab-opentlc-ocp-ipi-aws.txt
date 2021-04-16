@@ -4,8 +4,8 @@ Lab RH OpenTLC OCP 4.x
 # LAB OPENTLC sur AWS
 ########################################################################
 
-| https://labs.opentlc.com
-| Services â†’ Catalogs â†’ All Services â†’ OPENTLC OpenShift 4 Labs.
+| go to  https://labs.opentlc.com
+| Services -> Catalogs ->  All Services -> OPENTLC OpenShift 4 Labs.
 | On the left, | select OpenShift 4 Installation Lab.
 
 # LAB Input to Access the OpenShift Installation / Bastion
